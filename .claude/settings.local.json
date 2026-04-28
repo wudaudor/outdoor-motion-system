@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where claude:*)",
+      "Read(//usr/local/bin/**)",
+      "Read(//c/Users/28609/.claude/bin/**)",
+      "Bash(cmd //c \"where claude\")",
+      "Bash(powershell -Command \"Get-ExecutionPolicy -List\")",
+      "Bash(powershell -Command \"claude.cmd --version\")",
+      "Bash(powershell -Command \"claude --version\")",
+      "Bash(pip install:*)",
+      "Bash(uv:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git config:*)",
+      "Bash(python3 -c \"from docx import Document; doc = Document\\(r'面向户外环境的国产开发板低功耗定时监控与实时回传系统设计方案.docx'\\); [print\\(p.text\\) for p in doc.paragraphs]\")",
+      "Bash(python -c \"from docx import Document; doc = Document\\(r'面向户外环境的国产开发板低功耗定时监控与实时回传系统设计方案.docx'\\); [print\\(p.text\\) for p in doc.paragraphs]\")"
+    ]
+  }
+}
