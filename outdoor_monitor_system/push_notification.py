@@ -14,7 +14,7 @@ class ServerChanPusher:
     """Server酱微信推送器"""
 
     # Server酱 API 地址（新版 v2）
-    API_URL = "https://push.example.com/{sckey}.send"
+    API_URL = "https://sctapi.ftqq.com/{sckey}.send"
 
     def __init__(self, sc_key: str):
         """
