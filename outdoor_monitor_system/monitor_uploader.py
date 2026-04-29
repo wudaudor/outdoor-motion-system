@@ -31,7 +31,8 @@ class Config:
     FRAME_HEIGHT = 720
 
     # GPIO 参数
-    LED_PIN = 36  # GPIO36 对应物理引脚 36
+    LED_PIN = 36     # GPIO36 对应物理引脚 36
+    BUZZER_PIN = 38  # GPIO38 对应物理引脚 38（有源蜂鸣器）
 
     # 检测参数
     ROI = (320, 180, 640, 360)  # 检测区域 (x, y, w, h)
@@ -68,14 +69,17 @@ class Config:
 class GPIOController:
     """GPIO 控制器"""
 
-    def __init__(self, led_pin: int = Config.LED_PIN):
+    def __init__(self, led_pin: int = Config.LED_PIN, buzzer_pin: int = Config.BUZZER_PIN):
         self.led_pin = led_pin
+        self.buzzer_pin = buzzer_pin
+        self._alert_thread = None
         self._init_gpio()
 
     def _init_gpio(self):
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup(self.led_pin, GPIO.OUT, initial=GPIO.LOW)
-        print(f"GPIO 初始化完成，LED 引脚: {self.led_pin}")
+        GPIO.setup(self.buzzer_pin, GPIO.OUT, initial=GPIO.LOW)
+        print(f"GPIO 初始化完成，LED 引脚: {self.led_pin}，蜂鸣器引脚: {self.buzzer_pin}")
 
     def led_on(self):
         GPIO.output(self.led_pin, GPIO.HIGH)
@@ -91,7 +95,30 @@ class GPIOController:
             self.led_off()
             time.sleep(interval)
 
+    def buzzer_on(self):
+        GPIO.output(self.buzzer_pin, GPIO.HIGH)
+
+    def buzzer_off(self):
+        GPIO.output(self.buzzer_pin, GPIO.LOW)
+
+    def alert(self, times: int = 3, on_sec: float = 0.3, off_sec: float = 0.2):
+        """LED 闪烁 + 蜂鸣同步触发，后台线程运行不阻塞主循环"""
+        def _run():
+            for _ in range(times):
+                GPIO.output(self.led_pin, GPIO.HIGH)
+                GPIO.output(self.buzzer_pin, GPIO.HIGH)
+                time.sleep(on_sec)
+                GPIO.output(self.led_pin, GPIO.LOW)
+                GPIO.output(self.buzzer_pin, GPIO.LOW)
+                time.sleep(off_sec)
+        if self._alert_thread and self._alert_thread.is_alive():
+            return
+        self._alert_thread = Thread(target=_run, daemon=True)
+        self._alert_thread.start()
+
     def cleanup(self):
+        if self._alert_thread and self._alert_thread.is_alive():
+            self._alert_thread.join(timeout=2)
         GPIO.cleanup()
 
 
@@ -110,7 +137,7 @@ class OutdoorMonitor:
         config.LOG_DIR.mkdir(parents=True, exist_ok=True)
 
         # 初始化组件
-        self.gpio = GPIOController(config.LED_PIN)
+        self.gpio = GPIOController(config.LED_PIN, config.BUZZER_PIN)
         self.motion_detector = MotionDetector(
             roi=config.ROI,
             area_threshold=config.AREA_THRESHOLD
@@ -187,7 +214,7 @@ class OutdoorMonitor:
             print(f"上传异常: {e}")
             return False
 
-    def upload_and_push(self, filepath: Path, kind: str = "event") -> str:
+    def upload_and_push(self, filepath: Path, kind: str = "event", count: int = 1) -> str:
         """
         上传文件并发送微信推送
 
@@ -206,7 +233,7 @@ class OutdoorMonitor:
                 device_id=self.config.DEVICE_ID,
                 image_url=image_url,
                 location="监控区域",
-                threshold=1
+                threshold=count
             )
             print("微信推送已发送")
 
@@ -310,20 +337,16 @@ class OutdoorMonitor:
                         event_path = self.config.SNAPSHOT_DIR / f"{timestamp}_event.jpg"
                         cv2.imwrite(str(event_path), frame)
 
+                        # LED 闪烁 + 蜂鸣报警（后台线程，不阻塞）
+                        self.gpio.alert(times=3)
+
                         # 上传并推送微信
-                        self.upload_and_push(event_path, "event")
+                        self.upload_and_push(event_path, "event", count=detection_count)
 
                         # 录像
                         self.record_video(self.config.RECORD_SECONDS)
 
-                        # LED 亮起
-                        self.gpio.led_on()
-
-                # 显示检测画面（可注释掉以减少资源消耗）
-                result = self.motion_detector.draw_detection(frame, mask, contours)
-                cv2.imshow("Monitor", result)
-
-                # 按 q 退出
+                # 无界面运行时跳过显示，按 q 退出（仅有桌面时有效）
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
 
