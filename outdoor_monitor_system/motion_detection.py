@@ -24,13 +24,19 @@ class MotionDetector:
         area_threshold: int = 1200,
         history: int = 500,
         var_threshold: int = 40,
-        detect_shadows: bool = True
+        detect_shadows: bool = True,
+        shadow_threshold: int = 200,
+        morph_kernel_size: int = 5,
+        morph_kernel_shape: str = "ellipse"
     ):
         self.roi = roi
         self.area_threshold = area_threshold
         self.history = history
         self.var_threshold = var_threshold
         self.detect_shadows = detect_shadows
+        self.shadow_threshold = shadow_threshold
+        self.morph_kernel_size = morph_kernel_size
+        self.morph_kernel_shape = morph_kernel_shape
 
         self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
             history=history,
@@ -50,9 +56,13 @@ class MotionDetector:
         fg_mask = self.bg_subtractor.apply(roi_frame)
 
         if self.detect_shadows:
-            fg_mask = cv2.threshold(fg_mask, 200, 255, cv2.THRESH_BINARY)[1]
+            fg_mask = cv2.threshold(fg_mask, self.shadow_threshold, 255, cv2.THRESH_BINARY)[1]
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        shape = {"ellipse": cv2.MORPH_ELLIPSE, "rect": cv2.MORPH_RECT, "cross": cv2.MORPH_CROSS}
+        kernel = cv2.getStructuringElement(
+            shape.get(self.morph_kernel_shape, cv2.MORPH_ELLIPSE),
+            (self.morph_kernel_size, self.morph_kernel_size)
+        )
         fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel)
         fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel)
 
@@ -136,12 +146,45 @@ class PersonDetector:
     """基于 OpenCV HOG 的行人检测器"""
 
     def __init__(
-        self, roi: Optional[Tuple[int, int, int, int]] = None,
-        min_weight: float = 0.65, max_width: int = 640
+        self,
+        roi: Optional[Tuple[int, int, int, int]] = None,
+        min_weight: float = 0.65,
+        max_width: int = 640,
+        hit_threshold: float = 0.0,
+        win_stride: Tuple[int, int] = (8, 8),
+        padding: Tuple[int, int] = (16, 16),
+        scale: float = 1.05,
+        geom_min_height: int = 64,
+        geom_min_aspect: float = 1.5,
+        skin_h_low: int = 0,
+        skin_h_high: int = 20,
+        skin_s_low: int = 60,
+        skin_s_high: int = 255,
+        skin_v_low: int = 80,
+        skin_v_high: int = 255,
+        skin_min_pixels: int = 80,
+        skin_min_ratio: float = 0.05,
+        nms_overlap: float = 0.35
     ):
         self.roi = roi
         self.min_weight = min_weight
         self.max_width = max_width
+        self.hit_threshold = hit_threshold
+        self.win_stride = win_stride
+        self.padding = padding
+        self.scale = scale
+        self.geom_min_height = geom_min_height
+        self.geom_min_aspect = geom_min_aspect
+        self.skin_h_low = skin_h_low
+        self.skin_h_high = skin_h_high
+        self.skin_s_low = skin_s_low
+        self.skin_s_high = skin_s_high
+        self.skin_v_low = skin_v_low
+        self.skin_v_high = skin_v_high
+        self.skin_min_pixels = skin_min_pixels
+        self.skin_min_ratio = skin_min_ratio
+        self.nms_overlap = nms_overlap
+
         self.hog = cv2.HOGDescriptor()
         self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
@@ -163,8 +206,11 @@ class PersonDetector:
             detect_frame = cv2.resize(detect_frame, (self.max_width, new_height))
 
         rects, weights = self.hog.detectMultiScale(
-            detect_frame, hitThreshold=0, winStride=(8, 8),
-            padding=(16, 16), scale=1.05
+            detect_frame,
+            hitThreshold=self.hit_threshold,
+            winStride=self.win_stride,
+            padding=self.padding,
+            scale=self.scale
         )
 
         boxes = []
@@ -176,17 +222,16 @@ class PersonDetector:
             sy = int(y * scale_back + y0)
             sw = int(w * scale_back)
             sh = int(h * scale_back)
-            if sh < 64 or sw == 0 or sh / sw < 1.5:
+            if sh < self.geom_min_height or sw == 0 or sh / sw < self.geom_min_aspect:
                 continue
-            if not PersonDetector._has_skin_tone(frame, (sx, sy, sw, sh)):
+            if not self._has_skin_tone(frame, (sx, sy, sw, sh)):
                 continue
             boxes.append((sx, sy, sw, sh, weight))
 
         boxes = self._non_max_suppression(boxes)
         return len(boxes) > 0, boxes
 
-    @staticmethod
-    def _has_skin_tone(frame: np.ndarray, box: tuple, min_ratio: float = 0.05) -> bool:
+    def _has_skin_tone(self, frame: np.ndarray, box: tuple) -> bool:
         x, y, w, h = box[:4]
         fh, fw = frame.shape[:2]
         x1, y1 = max(0, x), max(0, y)
@@ -196,20 +241,19 @@ class PersonDetector:
             return False
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv,
-                           np.array([0, 60, 80], dtype=np.uint8),
-                           np.array([20, 255, 255], dtype=np.uint8))
+                           np.array([self.skin_h_low, self.skin_s_low, self.skin_v_low], dtype=np.uint8),
+                           np.array([self.skin_h_high, self.skin_s_high, self.skin_v_high], dtype=np.uint8))
         skin_px = int(np.count_nonzero(mask))
         total_px = (x2 - x1) * (y2 - y1)
-        return skin_px >= 80 and (skin_px / total_px) >= min_ratio
+        return skin_px >= self.skin_min_pixels and (skin_px / total_px) >= self.skin_min_ratio
 
-    @staticmethod
-    def _non_max_suppression(boxes: list, overlap_threshold: float = 0.35) -> list:
+    def _non_max_suppression(self, boxes: list) -> list:
         if not boxes:
             return []
         boxes = sorted(boxes, key=lambda box: box[4], reverse=True)
         kept = []
         for box in boxes:
-            if all(PersonDetector._iou(box, kept_box) < overlap_threshold
+            if all(PersonDetector._iou(box, kept_box) < self.nms_overlap
                    for kept_box in kept):
                 kept.append(box)
         return kept
