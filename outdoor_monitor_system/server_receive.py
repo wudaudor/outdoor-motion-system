@@ -27,21 +27,24 @@ INDEX_HTML = """
 <head>
     <title>监控系统 - 文件浏览</title>
     <meta charset="utf-8">
+    <meta http-equiv="refresh" content="5">
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-        h1 { color: #333; }
+        body { font-family: Arial, "Microsoft YaHei", sans-serif; margin: 20px; background: #f5f5f5; color: #222; }
+        h1 { color: #222; margin-bottom: 8px; }
+        .hint { color: #666; margin-bottom: 20px; }
         .upload-form { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-        .file-list { background: white; padding: 20px; border-radius: 8px; }
-        .file-item { padding: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
-        .file-item:last-child { border-bottom: none; }
-        .file-item img { max-width: 200px; max-height: 150px; }
-        .alert { padding: 15px; margin-bottom: 20px; border-radius: 5px; }
-        .alert-success { background: #d4edda; color: #155724; }
-        .alert-error { background: #f8d7da; color: #721c24; }
+        .file-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+        .file-item { background: white; border: 1px solid #e6e6e6; border-radius: 8px; padding: 12px; }
+        .file-item img { width: 100%; height: 170px; object-fit: cover; border-radius: 6px; background: #eee; }
+        .file-name { font-size: 13px; word-break: break-all; margin-top: 8px; }
+        .file-meta { color: #666; font-size: 12px; margin-top: 5px; }
+        .file-kind { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #e8f2ff; color: #07559c; margin-top: 8px; font-size: 12px; }
+        a { color: #07559c; text-decoration: none; }
     </style>
 </head>
 <body>
-    <h1>📹 监控系统 - 文件服务器</h1>
+    <h1>📹 户外监控系统</h1>
+    <div class="hint">页面每 5 秒自动刷新；检测到运动后会出现 event 图片和录像文件。</div>
 
     <div class="upload-form">
         <h2>文件上传</h2>
@@ -53,16 +56,19 @@ INDEX_HTML = """
         </form>
     </div>
 
+    <h2>最近文件</h2>
     <div class="file-list">
-        <h2>最近文件</h2>
         {% if files %}
             {% for f in files %}
             <div class="file-item">
-                <span>{{ f.name }} ({{ f.time }})</span>
-                <span>{{ f.kind }}</span>
                 {% if f.is_image %}
-                <a href="/uploads/{{ f.name }}">查看</a>
+                <a href="/uploads/{{ f.name }}" target="_blank"><img src="/uploads/{{ f.name }}" alt="{{ f.name }}"></a>
+                {% else %}
+                <p><a href="/uploads/{{ f.name }}" target="_blank">打开文件</a></p>
                 {% endif %}
+                <div class="file-name"><a href="/uploads/{{ f.name }}" target="_blank">{{ f.name }}</a></div>
+                <div class="file-meta">{{ f.time }}</div>
+                <span class="file-kind">{{ f.kind }}</span>
             </div>
             {% endfor %}
         {% else %}

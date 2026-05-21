@@ -202,6 +202,87 @@ class MotionDetector:
         self.first_frame = None
 
 
+class PersonDetector:
+    """基于 OpenCV HOG 的行人检测器，不依赖额外模型文件。"""
+
+    def __init__(
+        self,
+        roi: Optional[Tuple[int, int, int, int]] = None,
+        min_weight: float = 0.2,
+        max_width: int = 640
+    ):
+        self.roi = roi
+        self.min_weight = min_weight
+        self.max_width = max_width
+        self.hog = cv2.HOGDescriptor()
+        self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+
+    def detect(self, frame: np.ndarray) -> Tuple[bool, list]:
+        if self.roi is not None:
+            x0, y0, w0, h0 = self.roi
+            detect_frame = frame[y0:y0+h0, x0:x0+w0]
+        else:
+            x0, y0 = 0, 0
+            detect_frame = frame
+
+        if detect_frame.size == 0:
+            return False, []
+
+        scale_back = 1.0
+        if detect_frame.shape[1] > self.max_width:
+            scale_back = detect_frame.shape[1] / self.max_width
+            new_height = int(detect_frame.shape[0] / scale_back)
+            detect_frame = cv2.resize(detect_frame, (self.max_width, new_height))
+
+        rects, weights = self.hog.detectMultiScale(
+            detect_frame,
+            hitThreshold=0,
+            winStride=(8, 8),
+            padding=(16, 16),
+            scale=1.05
+        )
+
+        boxes = []
+        for i, (x, y, w, h) in enumerate(rects):
+            weight = float(weights[i]) if len(weights) > i else 1.0
+            if weight < self.min_weight:
+                continue
+            boxes.append((
+                int(x * scale_back + x0),
+                int(y * scale_back + y0),
+                int(w * scale_back),
+                int(h * scale_back),
+                weight
+            ))
+
+        boxes = self._non_max_suppression(boxes)
+        return len(boxes) > 0, boxes
+
+    @staticmethod
+    def _non_max_suppression(boxes: list, overlap_threshold: float = 0.35) -> list:
+        if not boxes:
+            return []
+
+        boxes = sorted(boxes, key=lambda box: box[4], reverse=True)
+        kept = []
+        for box in boxes:
+            if all(PersonDetector._iou(box, kept_box) < overlap_threshold for kept_box in kept):
+                kept.append(box)
+        return kept
+
+    @staticmethod
+    def _iou(a: tuple, b: tuple) -> float:
+        ax, ay, aw, ah, _ = a
+        bx, by, bw, bh, _ = b
+        x1 = max(ax, bx)
+        y1 = max(ay, by)
+        x2 = min(ax + aw, bx + bw)
+        y2 = min(ay + ah, by + bh)
+        inter = max(0, x2 - x1) * max(0, y2 - y1)
+        union = aw * ah + bw * bh - inter
+        return inter / union if union else 0.0
+
+
 # ============ 测试代码 ============
 
 if __name__ == "__main__":

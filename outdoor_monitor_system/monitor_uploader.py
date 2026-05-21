@@ -14,10 +14,12 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from threading import Thread
+from typing import Any, Dict, Optional
+from urllib.parse import urljoin
 import VisionFive.gpio as GPIO
 
 # 导入自定义模块
-from motion_detection import MotionDetector
+from motion_detection import MotionDetector, PersonDetector
 from push_notification import ServerChanPusher
 
 
@@ -38,6 +40,9 @@ class Config:
     ROI = (320, 180, 640, 360)  # 检测区域 (x, y, w, h)
     AREA_THRESHOLD = 1200  # 最小检测面积
     DARK_THRESHOLD = 55  # 低照度阈值
+    PERSON_DETECT_ENABLE = True
+    PERSON_MIN_WEIGHT = 0.2
+    CAMERA_SHAKE_RATIO = 0.65
 
     # 检测模式
     # 0: 仅定时抓拍
@@ -54,6 +59,7 @@ class Config:
 
     # 微信推送
     PUSH_ENABLE = True
+    TEST_PUSH_ON_START = False
     SCKEY = "your-sc-key-here"
     DEVICE_ID = "VF2-01"
 
@@ -142,6 +148,10 @@ class OutdoorMonitor:
             roi=config.ROI,
             area_threshold=config.AREA_THRESHOLD
         )
+        self.person_detector = PersonDetector(
+            roi=config.ROI,
+            min_weight=config.PERSON_MIN_WEIGHT
+        ) if config.PERSON_DETECT_ENABLE else None
         self.pusher = ServerChanPusher(config.SCKEY) if config.PUSH_ENABLE else None
 
         # 摄像头
@@ -181,11 +191,11 @@ class OutdoorMonitor:
 
         return True, filepath
 
-    def upload_file(self, filepath: Path, kind: str = "image") -> bool:
+    def upload_file(self, filepath: Path, kind: str = "image") -> Optional[Dict[str, Any]]:
         """上传文件到服务器"""
         if not filepath.exists():
             print(f"文件不存在: {filepath}")
-            return False
+            return None
 
         try:
             with open(filepath, 'rb') as f:
@@ -205,14 +215,14 @@ class OutdoorMonitor:
             if response.status_code == 200:
                 result = response.json()
                 print(f"上传成功: {result.get('path', '')}")
-                return True
+                return result
             else:
                 print(f"上传失败: HTTP {response.status_code}")
-                return False
+                return None
 
         except requests.exceptions.RequestException as e:
             print(f"上传异常: {e}")
-            return False
+            return None
 
     def upload_and_push(self, filepath: Path, kind: str = "event", count: int = 1) -> str:
         """
@@ -222,8 +232,14 @@ class OutdoorMonitor:
             图片的 URL 地址
         """
         # 先上传获取 URL
-        if self.upload_file(filepath, kind):
-            image_url = f"{self.config.SERVER_BASE_URL}/uploads/{filepath.name}"
+        result = self.upload_file(filepath, kind)
+        if result:
+            image_url = result.get("url")
+            if image_url:
+                image_url = urljoin(self.config.SERVER_BASE_URL.rstrip("/") + "/", image_url.lstrip("/"))
+            else:
+                filename = result.get("filename", filepath.name)
+                image_url = f"{self.config.SERVER_BASE_URL}/uploads/{filename}"
         else:
             image_url = None
 
@@ -238,6 +254,24 @@ class OutdoorMonitor:
             print("微信推送已发送")
 
         return image_url
+
+    def is_camera_shake(self, contours: list) -> bool:
+        """运动区域过大时通常是镜头晃动、强光变化或整体画面变化。"""
+        if not contours:
+            return False
+
+        motion_area = sum(cv2.contourArea(cnt) for cnt in contours)
+        if self.config.ROI:
+            _, _, roi_w, roi_h = self.config.ROI
+            frame_area = roi_w * roi_h
+        else:
+            frame_area = self.config.FRAME_WIDTH * self.config.FRAME_HEIGHT
+
+        ratio = motion_area / frame_area if frame_area else 0
+        if ratio >= self.config.CAMERA_SHAKE_RATIO:
+            print(f"忽略整体画面晃动/光照变化，运动面积占比: {ratio:.2f}")
+            return True
+        return False
 
     def record_video(self, duration: int = 10) -> Path:
         """
@@ -321,10 +355,24 @@ class OutdoorMonitor:
                 is_motion, mask, contours = self.motion_detector.detect(frame)
 
                 if is_motion:
-                    detection_count += 1
-                    print(f"检测到运动目标 #{detection_count}")
+                    if self.is_camera_shake(contours):
+                        time.sleep(0.1)
+                        continue
 
-                    # 第一次检测到时：
+                    person_detected = True
+                    person_boxes = []
+                    if self.person_detector:
+                        person_detected, person_boxes = self.person_detector.detect(frame)
+
+                    if not person_detected:
+                        print("检测到运动，但未识别到人，忽略本次触发")
+                        time.sleep(0.1)
+                        continue
+
+                    detection_count += 1
+                    print(f"检测到人员目标 #{detection_count}，人形框数量: {len(person_boxes)}")
+
+                    # 第一次检测到人员时：
                     # 1. 保存事件图
                     # 2. 上传并推送微信
                     # 3. 开始录像
@@ -335,6 +383,10 @@ class OutdoorMonitor:
                         # 保存事件图
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                         event_path = self.config.SNAPSHOT_DIR / f"{timestamp}_event.jpg"
+                        for x, y, w, h, weight in person_boxes:
+                            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                            cv2.putText(frame, f"person {weight:.2f}", (x, max(20, y-8)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                         cv2.imwrite(str(event_path), frame)
 
                         # LED 闪烁 + 蜂鸣报警（后台线程，不阻塞）
@@ -376,7 +428,7 @@ class OutdoorMonitor:
             sys.exit(1)
 
         # 测试微信推送
-        if self.pusher and self.config.PUSH_ENABLE:
+        if self.pusher and self.config.PUSH_ENABLE and self.config.TEST_PUSH_ON_START:
             print("测试微信推送...")
             if self.pusher.send_test():
                 print("微信推送测试成功")
@@ -424,10 +476,12 @@ def parse_args():
                         help=f'录像时长秒数 (默认: {Config.RECORD_SECONDS})')
     parser.add_argument('--save-dir', type=str, default=str(Config.SAVE_DIR),
                         help=f'存储目录 (默认: {Config.SAVE_DIR})')
-    parser.add_argument('--sckey', type=str, default=Config.SCKEY,
+    parser.add_argument('--sckey', type=str, default=os.environ.get("SCKEY", Config.SCKEY),
                         help='Server酱 SCKEY')
     parser.add_argument('--no-push', action='store_true',
                         help='禁用微信推送')
+    parser.add_argument('--test-push-on-start', action='store_true',
+                        help='启动时发送一条微信测试消息')
     parser.add_argument('--detect-mode', type=int, choices=[0, 1], default=Config.DETECT_MODE,
                         help='检测模式: 0=仅抓拍, 1=抓拍+运动检测')
 
@@ -441,11 +495,16 @@ if __name__ == "__main__":
     Config.CAMERA_INDEX = args.camera_index
     Config.DEVICE_ID = args.device_id
     Config.UPLOAD_URL = args.upload_url
+    Config.SERVER_BASE_URL = args.upload_url.rsplit("/upload", 1)[0].rstrip("/")
     Config.WORK_SECONDS = args.work_sec
     Config.RECORD_SECONDS = args.record_sec
     Config.SAVE_DIR = Path(args.save_dir)
+    Config.SNAPSHOT_DIR = Config.SAVE_DIR / "snapshots"
+    Config.VIDEO_DIR = Config.SAVE_DIR / "videos"
+    Config.LOG_DIR = Config.SAVE_DIR / "logs"
     Config.SCKEY = args.sckey
     Config.PUSH_ENABLE = not args.no_push and args.sckey != "your-sc-key-here"
+    Config.TEST_PUSH_ON_START = args.test_push_on_start
     Config.DETECT_MODE = args.detect_mode
 
     # 创建并启动监控器

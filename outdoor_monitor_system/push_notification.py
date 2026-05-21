@@ -53,7 +53,7 @@ class ServerChanPusher:
             if result.get("errno") == 0 or result.get("code") == 0:
                 return True
             else:
-                print(f"推送失败: {result.get("errmsg", "未知错误")}")
+                print(f"推送失败: {result.get('errmsg', '未知错误')}")
                 return False
 
         except requests.exceptions.Timeout:
