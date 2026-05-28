@@ -163,14 +163,17 @@ def health():
 # ============ 启动 ============
 
 if __name__ == "__main__":
+    host = os.environ.get("MONITOR_WEB_HOST", "0.0.0.0")
+    port = int(os.environ.get("MONITOR_WEB_PORT", "8000"))
+
     print("""
 ========================================
   监控系统 - Flask 文件服务器
 ========================================
-  上传地址: http://your-server-ip:5000/upload
-  Web界面:  http://your-server-ip:5000/
+  上传地址: http://your-server-ip:{port}/upload
+  Web界面:  http://your-server-ip:{port}/
 ========================================
-    """)
+    """.format(port=port))
 
     app.start_time = time.time()
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host=host, port=port, debug=False)
