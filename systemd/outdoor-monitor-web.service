@@ -1,0 +1,18 @@
+[Unit]
+Description=Outdoor Monitor Local Web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/user/outdoor_monitor
+Environment=PYTHONUNBUFFERED=1
+Environment=MONITOR_WEB_PORT=8000
+ExecStart=/home/user/outdoor_monitor/.venv/bin/python /home/user/outdoor_monitor/server_receive.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/user/outdoor_monitor/data/logs/web.log
+StandardError=append:/home/user/outdoor_monitor/data/logs/web.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=查看监控画面
+Comment=打开单片机本机监控页面
+Exec=firefox http://127.0.0.1:8000/
+Icon=firefox
+Terminal=false
+Categories=Network;Utility;

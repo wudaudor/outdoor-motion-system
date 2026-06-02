@@ -1,0 +1,6 @@
+[project]
+name = "outdoor-motion-system"
+version = "0.1.0"
+description = "户外监控与微信推送系统"
+requires-python = ">=3.9"
+dependencies = []

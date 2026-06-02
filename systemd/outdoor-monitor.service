@@ -1,0 +1,18 @@
+[Unit]
+Description=Outdoor Monitor on VisionFive 2
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/user/outdoor_monitor
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/outdoor-monitor.env
+ExecStart=/home/user/outdoor_monitor/.venv/bin/python /home/user/outdoor_monitor/monitor_uploader.py --camera-index 5 --device-id VF2-01 --upload-url http://127.0.0.1:8000/upload --work-sec 20 --record-sec 0 --save-dir /home/user/outdoor_monitor/data --detect-mode 1 
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/user/outdoor_monitor/data/logs/monitor.log
+StandardError=append:/home/user/outdoor_monitor/data/logs/monitor.log
+
+[Install]
+WantedBy=multi-user.target
